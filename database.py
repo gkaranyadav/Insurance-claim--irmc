@@ -1,223 +1,211 @@
-import sqlite3
-from datetime import datetime
-import bcrypt
+import streamlit as st
+from databricks import sql
+import pandas as pd
 from typing import Optional, Dict, Any
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class UserDatabase:
-    def __init__(self, db_path: str = "users.db"):
-        self.db_path = db_path
-        self.init_database()
-    
-    def init_database(self):
-        """Initialize database with required tables"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+class DatabricksDatabase:
+    def __init__(self):
+        self.host = st.secrets["DATABRICKS_HOST"]
+        self.http_path = st.secrets["DATABRICKS_HTTP_PATH"]
+        self.token = st.secrets["DATABRICKS_TOKEN"]
+        self.database = st.secrets.get("DATABASE_NAME", "insurance_db")
+        self.table = st.secrets.get("TABLE_NAME", "insurance_data")
         
-        # Users table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT,
-            full_name TEXT,
-            policy_number TEXT,
-            role TEXT DEFAULT 'policyholder',
-            google_id TEXT UNIQUE,
-            is_verified INTEGER DEFAULT 0,
-            mfa_enabled INTEGER DEFAULT 0,
-            failed_login_attempts INTEGER DEFAULT 0,
-            last_login TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        
-        # Claims table (minimal for now)
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_claims (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            claim_type TEXT,
-            claim_status TEXT DEFAULT 'pending',
-            amount REAL,
-            submitted_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-        ''')
-        
-        # Create default admin user if not exists
-        cursor.execute("SELECT * FROM users WHERE email = ?", ("admin@secureclaim.ai",))
-        if not cursor.fetchone():
-            admin_hash = bcrypt.hashpw("Admin@123".encode(), bcrypt.gensalt())
-            cursor.execute('''
-            INSERT INTO users (email, password_hash, full_name, role, is_verified)
-            VALUES (?, ?, ?, ?, ?)
-            ''', ("admin@secureclaim.ai", admin_hash.decode(), "System Administrator", "admin", 1))
-            logger.info("Default admin user created")
-        
-        conn.commit()
-        conn.close()
-    
-    def create_user(self, email: str, password: str, full_name: str, 
-                   policy_number: Optional[str] = None, role: str = "policyholder") -> bool:
-        """Create a new user with email/password"""
+    def get_connection(self):
+        """Create Databricks SQL connection"""
         try:
-            password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-            INSERT INTO users (email, password_hash, full_name, policy_number, role, is_verified)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ''', (email, password_hash.decode(), full_name, policy_number, role, 0))
-            
-            conn.commit()
-            conn.close()
-            return True
-        except sqlite3.IntegrityError:
-            logger.error(f"User with email {email} already exists")
-            return False
+            conn = sql.connect(
+                server_hostname=self.host,
+                http_path=self.http_path,
+                access_token=self.token
+            )
+            return conn
         except Exception as e:
-            logger.error(f"Error creating user: {e}")
-            return False
+            logger.error(f"Databricks connection failed: {e}")
+            return None
     
-    def create_google_user(self, email: str, google_id: str, full_name: str, 
-                          role: str = "policyholder") -> bool:
-        """Create/update user from Google OAuth"""
+    def authenticate_user(self, identifier: str, password: str = None) -> Optional[Dict[str, Any]]:
+        """Authenticate user using REAL Databricks data"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Check if user exists by email
-            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
-            existing = cursor.fetchone()
-            
-            if existing:
-                # Update Google ID if not set
-                cursor.execute('''
-                UPDATE users SET google_id = ?, is_verified = 1, updated_at = CURRENT_TIMESTAMP
-                WHERE email = ?
-                ''', (google_id, email))
-            else:
-                # Create new user
-                cursor.execute('''
-                INSERT INTO users (email, google_id, full_name, role, is_verified)
-                VALUES (?, ?, ?, ?, ?)
-                ''', (email, google_id, full_name, role, 1))
-            
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            logger.error(f"Error creating Google user: {e}")
-            return False
-    
-    def verify_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
-        """Verify email/password login"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-            SELECT id, email, password_hash, full_name, role, policy_number, 
-                   is_verified, failed_login_attempts, mfa_enabled
-            FROM users 
-            WHERE email = ? AND password_hash IS NOT NULL
-            ''', (email,))
-            
-            user = cursor.fetchone()
-            if not user:
+            conn = self.get_connection()
+            if not conn:
                 return None
             
-            # Check if account is locked
-            if user[7] >= 5:  # failed_login_attempts
-                logger.warning(f"Account locked for {email}")
-                return None
-            
-            # Verify password
-            if bcrypt.checkpw(password.encode(), user[2].encode()):
-                # Reset failed attempts on successful login
-                cursor.execute('''
-                UPDATE users 
-                SET failed_login_attempts = 0, last_login = CURRENT_TIMESTAMP
-                WHERE email = ?
-                ''', (email,))
+            with conn.cursor() as cursor:
+                # Query to find user by EmployeeID, Email, or PolicyNumber
+                query = f"""
+                SELECT 
+                    EmployeeID,
+                    FirstName,
+                    LastName,
+                    Email,
+                    Phone,
+                    PolicyNumber,
+                    InsuranceType,
+                    PolicyStatus,
+                    CoverageAmountUSD,
+                    MonthlyPremiumUSD,
+                    ClaimStatus,
+                    RiskScore,
+                    FraudRisk,
+                    Company,
+                    Role
+                FROM {self.database}.{self.table}
+                WHERE EmployeeID = %s 
+                   OR Email = %s 
+                   OR PolicyNumber = %s
+                LIMIT 1
+                """
                 
-                user_data = {
-                    "id": user[0],
-                    "email": user[1],
-                    "full_name": user[3],
-                    "role": user[4],
-                    "policy_number": user[5],
-                    "is_verified": bool(user[6]),
-                    "mfa_enabled": bool(user[8]),
-                    "auth_method": "email"
-                }
-                conn.commit()
-                conn.close()
-                return user_data
-            else:
-                # Increment failed attempts
-                cursor.execute('''
-                UPDATE users 
-                SET failed_login_attempts = failed_login_attempts + 1
-                WHERE email = ?
-                ''', (email,))
-                conn.commit()
-                conn.close()
+                cursor.execute(query, (identifier, identifier, identifier))
+                result = cursor.fetchone()
+                
+                if result:
+                    # Map result to user dictionary
+                    user_data = {
+                        "employee_id": result[0],
+                        "first_name": result[1],
+                        "last_name": result[2],
+                        "email": result[3],
+                        "phone": result[4],
+                        "policy_number": result[5],
+                        "insurance_type": result[6],
+                        "policy_status": result[7],
+                        "coverage_amount": float(result[8]) if result[8] else 0,
+                        "monthly_premium": float(result[9]) if result[9] else 0,
+                        "claim_status": result[10],
+                        "risk_score": int(result[11]) if result[11] else 0,
+                        "fraud_risk": result[12],
+                        "company": result[13],
+                        "role": result[14],
+                        "auth_method": "databricks"
+                    }
+                    return user_data
                 return None
                 
         except Exception as e:
-            logger.error(f"Error verifying user: {e}")
+            logger.error(f"Authentication error: {e}")
             return None
+        finally:
+            if 'conn' in locals():
+                conn.close()
     
-    def get_user_by_google_id(self, google_id: str) -> Optional[Dict[str, Any]]:
-        """Get user by Google ID"""
+    def get_user_policies(self, employee_id: str) -> list:
+        """Get all policies for a user"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-            SELECT id, email, full_name, role, policy_number, is_verified
-            FROM users 
-            WHERE google_id = ?
-            ''', (google_id,))
-            
-            user = cursor.fetchone()
-            conn.close()
-            
-            if user:
-                return {
-                    "id": user[0],
-                    "email": user[1],
-                    "full_name": user[2],
-                    "role": user[3],
-                    "policy_number": user[4],
-                    "is_verified": bool(user[5]),
-                    "auth_method": "google"
-                }
-            return None
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                query = f"""
+                SELECT 
+                    PolicyNumber,
+                    InsuranceType,
+                    CoverageCategory,
+                    PlanType,
+                    PolicyStatus,
+                    PolicyStartDate,
+                    PolicyEndDate,
+                    CoverageAmountUSD,
+                    MonthlyPremiumUSD
+                FROM {self.database}.{self.table}
+                WHERE EmployeeID = %s
+                """
+                cursor.execute(query, (employee_id,))
+                results = cursor.fetchall()
+                
+                policies = []
+                for row in results:
+                    policies.append({
+                        "policy_number": row[0],
+                        "insurance_type": row[1],
+                        "coverage_category": row[2],
+                        "plan_type": row[3],
+                        "policy_status": row[4],
+                        "start_date": row[5],
+                        "end_date": row[6],
+                        "coverage_amount": float(row[7]) if row[7] else 0,
+                        "monthly_premium": float(row[8]) if row[8] else 0
+                    })
+                return policies
         except Exception as e:
-            logger.error(f"Error getting Google user: {e}")
-            return None
+            logger.error(f"Error getting policies: {e}")
+            return []
     
-    def update_user_last_login(self, user_id: int):
-        """Update user's last login timestamp"""
+    def get_user_claims(self, employee_id: str) -> list:
+        """Get claim history for user"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-            UPDATE users SET last_login = CURRENT_TIMESTAMP
-            WHERE id = ?
-            ''', (user_id,))
-            conn.commit()
-            conn.close()
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                query = f"""
+                SELECT 
+                    PolicyNumber,
+                    ClaimStatus,
+                    ClaimDate,
+                    LastClaimAmountUSD,
+                    FraudRisk,
+                    PreviousClaims,
+                    ClaimFrequency
+                FROM {self.database}.{self.table}
+                WHERE EmployeeID = %s
+                ORDER BY ClaimDate DESC
+                """
+                cursor.execute(query, (employee_id,))
+                results = cursor.fetchall()
+                
+                claims = []
+                for row in results:
+                    claims.append({
+                        "policy_number": row[0],
+                        "status": row[1],
+                        "date": row[2],
+                        "amount": float(row[3]) if row[3] else 0,
+                        "fraud_risk": row[4],
+                        "previous_claims": int(row[5]) if row[5] else 0,
+                        "claim_frequency": float(row[6]) if row[6] else 0
+                    })
+                return claims
         except Exception as e:
-            logger.error(f"Error updating last login: {e}")
+            logger.error(f"Error getting claims: {e}")
+            return []
+    
+    def get_user_health_profile(self, employee_id: str) -> Dict[str, Any]:
+        """Get health profile for user"""
+        try:
+            conn = self.get_connection()
+            with conn.cursor() as cursor:
+                query = f"""
+                SELECT 
+                    ChronicCondition,
+                    Smoker,
+                    Alcoholic,
+                    BMICategory,
+                    BloodPressure,
+                    PreviousHospitalizations,
+                    RiskScore
+                FROM {self.database}.{self.table}
+                WHERE EmployeeID = %s
+                LIMIT 1
+                """
+                cursor.execute(query, (employee_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        "chronic_condition": result[0],
+                        "smoker": result[1],
+                        "alcoholic": result[2],
+                        "bmi_category": result[3],
+                        "blood_pressure": result[4],
+                        "hospitalizations": int(result[5]) if result[5] else 0,
+                        "risk_score": int(result[6]) if result[6] else 0
+                    }
+                return {}
+        except Exception as e:
+            logger.error(f"Error getting health profile: {e}")
+            return {}
 
 # Global database instance
-db = UserDatabase()
+db = DatabricksDatabase()
