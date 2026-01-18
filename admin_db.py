@@ -13,7 +13,6 @@ class AdminDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Admin users table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS admins (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +29,6 @@ class AdminDatabase:
         # Default admin if not exists
         cursor.execute("SELECT * FROM admins WHERE username = ?", ("admin",))
         if not cursor.fetchone():
-            # Default password: Admin@123
             password_hash = bcrypt.hashpw("Admin@123".encode(), bcrypt.gensalt())
             cursor.execute('''
             INSERT INTO admins (username, password_hash, full_name, email, role)
@@ -39,27 +37,6 @@ class AdminDatabase:
         
         conn.commit()
         conn.close()
-    
-    def create_admin(self, username: str, password: str, full_name: str, email: str, role: str = "admin") -> bool:
-        """Create new admin user"""
-        try:
-            password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-            INSERT INTO admins (username, password_hash, full_name, email, role)
-            VALUES (?, ?, ?, ?, ?)
-            ''', (username, password_hash.decode(), full_name, email, role))
-            
-            conn.commit()
-            conn.close()
-            return True
-        except sqlite3.IntegrityError:
-            return False
-        except Exception as e:
-            print(f"Error creating admin: {e}")
-            return False
     
     def authenticate_admin(self, username: str, password: str) -> dict:
         """Authenticate admin user"""
@@ -75,10 +52,8 @@ class AdminDatabase:
             result = cursor.fetchone()
             
             if result and bcrypt.checkpw(password.encode(), result[2].encode()):
-                # Update last login
-                cursor.execute('''
-                UPDATE admins SET last_login = ? WHERE username = ?
-                ''', (datetime.now(), username))
+                cursor.execute('UPDATE admins SET last_login = ? WHERE username = ?', 
+                             (datetime.now(), username))
                 conn.commit()
                 
                 admin_data = {
@@ -97,19 +72,6 @@ class AdminDatabase:
         except Exception as e:
             print(f"Admin auth error: {e}")
             return None
-    
-    def get_all_admins(self):
-        """Get all admin users"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, username, full_name, email, role, last_login FROM admins")
-            admins = cursor.fetchall()
-            conn.close()
-            return admins
-        except Exception as e:
-            print(f"Error getting admins: {e}")
-            return []
 
-# Global admin database instance
+# Create instance
 admin_db = AdminDatabase()
