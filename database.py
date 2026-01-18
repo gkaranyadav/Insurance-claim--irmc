@@ -66,7 +66,7 @@ class DatabricksDatabase:
             return False, f"Connection test failed: {str(e)}"
     
     def authenticate_user(self, identifier: str) -> Optional[Dict[str, Any]]:
-        """Authenticate user using REAL Databricks data - DEBUG VERSION"""
+        """Authenticate user using REAL Databricks data - FIXED FOR DATABRICKS"""
         try:
             logger.info(f"🔍 Authenticating user with identifier: {identifier}")
             
@@ -75,11 +75,8 @@ class DatabricksDatabase:
                 st.error("❌ Cannot connect to database")
                 return None
             
-            # First, let's see what identifiers exist
             with conn.cursor() as cursor:
-                # DEBUG: Show what we're looking for
-                logger.info(f"📊 Querying: SELECT * FROM {self.database}.{self.table} WHERE EmployeeID = '{identifier}' OR Email = '{identifier}' OR PolicyNumber = '{identifier}'")
-                
+                # FIXED: Databricks uses ? for parameters, not %s
                 query = f"""
                 SELECT 
                     EmployeeID,
@@ -98,12 +95,13 @@ class DatabricksDatabase:
                     Company,
                     Role
                 FROM {self.database}.{self.table}
-                WHERE EmployeeID = %s 
-                   OR Email = %s 
-                   OR PolicyNumber = %s
+                WHERE EmployeeID = ?
+                   OR Email = ? 
+                   OR PolicyNumber = ?
                 LIMIT 1
                 """
                 
+                logger.info(f"📊 Executing query with identifier: {identifier}")
                 cursor.execute(query, (identifier, identifier, identifier))
                 result = cursor.fetchone()
                 
@@ -130,25 +128,27 @@ class DatabricksDatabase:
                         "auth_method": "databricks"
                     }
                     
-                    # DEBUG: Show what we found
-                    st.info(f"✅ Found user: {user_data['first_name']} {user_data['last_name']}")
-                    logger.info(f"User data: {user_data}")
-                    
+                    st.success(f"✅ Welcome, {user_data['first_name']} {user_data['last_name']}!")
                     return user_data
+                    
                 else:
                     logger.warning(f"❌ NO USER FOUND for identifier: {identifier}")
                     
-                    # DEBUG: Show what's in the database
+                    # Show sample data to help user
                     cursor.execute(f"""
                     SELECT EmployeeID, Email, PolicyNumber 
                     FROM {self.database}.{self.table} 
                     LIMIT 5
                     """)
                     samples = cursor.fetchall()
-                    logger.info(f"Sample identifiers in DB: {samples}")
                     
-                    st.warning(f"No user found with: {identifier}")
-                    st.info(f"Try: EMP10001, dawn.knight@meta.com, or POL96733444")
+                    st.error(f"❌ No user found with: {identifier}")
+                    st.info("Try one of these:")
+                    for sample in samples:
+                        st.write(f"- EmployeeID: `{sample[0]}`")
+                        st.write(f"- Email: `{sample[1]}`")
+                        st.write(f"- PolicyNumber: `{sample[2]}`")
+                        st.write("---")
                     
                     return None
                     
@@ -165,6 +165,7 @@ class DatabricksDatabase:
         try:
             conn = self.get_connection()
             with conn.cursor() as cursor:
+                # FIXED: Using ? for parameters
                 query = f"""
                 SELECT 
                     PolicyNumber,
@@ -177,7 +178,7 @@ class DatabricksDatabase:
                     CoverageAmountUSD,
                     MonthlyPremiumUSD
                 FROM {self.database}.{self.table}
-                WHERE EmployeeID = %s
+                WHERE EmployeeID = ?
                 """
                 cursor.execute(query, (employee_id,))
                 results = cursor.fetchall()
@@ -205,6 +206,7 @@ class DatabricksDatabase:
         try:
             conn = self.get_connection()
             with conn.cursor() as cursor:
+                # FIXED: Using ? for parameters
                 query = f"""
                 SELECT 
                     PolicyNumber,
@@ -215,7 +217,7 @@ class DatabricksDatabase:
                     PreviousClaims,
                     ClaimFrequency
                 FROM {self.database}.{self.table}
-                WHERE EmployeeID = %s
+                WHERE EmployeeID = ?
                 ORDER BY ClaimDate DESC
                 """
                 cursor.execute(query, (employee_id,))
@@ -242,6 +244,7 @@ class DatabricksDatabase:
         try:
             conn = self.get_connection()
             with conn.cursor() as cursor:
+                # FIXED: Using ? for parameters
                 query = f"""
                 SELECT 
                     ChronicCondition,
@@ -252,7 +255,7 @@ class DatabricksDatabase:
                     PreviousHospitalizations,
                     RiskScore
                 FROM {self.database}.{self.table}
-                WHERE EmployeeID = %s
+                WHERE EmployeeID = ?
                 LIMIT 1
                 """
                 cursor.execute(query, (employee_id,))
