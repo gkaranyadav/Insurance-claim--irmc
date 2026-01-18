@@ -1,6 +1,7 @@
+# auth.py - FIXED VERSION
 import streamlit as st
 from admin_db import admin_db
-from database import policyholder_db
+from database import policyholder_db  # Changed from 'db' to 'policyholder_db'
 
 class InsuranceAuthenticator:
     def authenticate(self, username: str, password: str = None, is_admin_login: bool = False):
@@ -25,7 +26,7 @@ class InsuranceAuthenticator:
                 st.error("❌ Please enter Employee ID, Email, or Policy Number")
                 return None
             
-            policyholder = policyholder_db.authenticate_policyholder(username)
+            policyholder = policyholder_db.authenticate_policyholder(username)  # Changed from db.authenticate_user
             if policyholder:
                 st.success(f"✅ Welcome, {policyholder['first_name']}!")
                 return policyholder
