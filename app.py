@@ -1,6 +1,6 @@
 # Main application file - iRMC InsureAI ® - Insurance Claim AI Automation
 import streamlit as st
-from auth import authenticate
+from auth import authenticator
 from database import db
 import pandas as pd
 from datetime import datetime
