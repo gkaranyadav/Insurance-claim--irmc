@@ -189,9 +189,6 @@ def show_login_page():
                                 st.success("Account created successfully! Please login.")
     
             st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Footer
-    st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col2:
         st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
