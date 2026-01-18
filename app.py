@@ -98,20 +98,15 @@ def show_login_page():
     with tab1:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-            
-            # Google OAuth Button
-            if GOOGLE_CLIENT_ID:
+            st.markdown("<div class='login-container'>", unsafe_allow_html=True)# Google OAuth But tif GOOGLE_CLIENT_ID:
                 if st.button("Sign in with Google", key="google_login", type="secondary"):
                     # For Streamlit Cloud, we need to set up proper OAuth flow
                     st.info("Google OAuth setup required in production. Using demo for now.")
                     # In production, this would redirect to Google OAuth
                     st.session_state.page = "demo_google"
-            
             st.markdown("<hr>", unsafe_allow_html=True)
             st.markdown("<h3 style='text-align: center;'>Email Login</h3>", unsafe_allow_html=True)
-            
-            # Email/Password Form
+             # Email/Password Form
             with st.form("login_form"):
                 email = st.text_input("Email", placeholder="your.email@example.com")
                 password = st.text_input("Password", type="password", placeholder="Enter your password")
