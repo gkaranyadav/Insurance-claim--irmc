@@ -1,14 +1,13 @@
-# auth.py - FIXED VERSION
 import streamlit as st
 from admin_db import admin_db
-from database import policyholder_db  # Changed from 'db' to 'policyholder_db'
+from database import policyholder_db
 
 class InsuranceAuthenticator:
     def authenticate(self, username: str, password: str = None, is_admin_login: bool = False):
         """Unified authentication for admin and policyholders"""
         
         if is_admin_login:
-            # ADMIN LOGIN (SQLite)
+            # ADMIN LOGIN
             if not username or not password:
                 st.error("❌ Admin login requires username and password")
                 return None
@@ -21,12 +20,12 @@ class InsuranceAuthenticator:
                 st.error("❌ Invalid admin credentials")
                 return None
         else:
-            # POLICYHOLDER LOGIN (Databricks)
+            # POLICYHOLDER LOGIN
             if not username:
                 st.error("❌ Please enter Employee ID, Email, or Policy Number")
                 return None
             
-            policyholder = policyholder_db.authenticate_policyholder(username)  # Changed from db.authenticate_user
+            policyholder = policyholder_db.authenticate_policyholder(username)
             if policyholder:
                 st.success(f"✅ Welcome, {policyholder['first_name']}!")
                 return policyholder
