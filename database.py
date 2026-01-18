@@ -112,5 +112,5 @@ class DatabricksDatabase:
             logger.error(f"Error getting claims: {e}")
             return []
 
-# Global instance
+# Create instance - THIS IS IMPORTANT!
 policyholder_db = DatabricksDatabase()
