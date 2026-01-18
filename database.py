@@ -9,12 +9,17 @@ logger = logging.getLogger(__name__)
 
 class DatabricksDatabase:
     def __init__(self):
-        self.host = st.secrets["DATABRICKS_HOST"]
-        self.http_path = st.secrets["DATABRICKS_HTTP_PATH"]
-        self.token = st.secrets["DATABRICKS_TOKEN"]
-        self.database = st.secrets.get("DATABASE_NAME", "insurance_db")
-        self.table = st.secrets.get("TABLE_NAME", "insurance_data")
-        
+        try:
+            self.host = st.secrets["DATABRICKS_HOST"]
+            self.http_path = st.secrets["DATABRICKS_HTTP_PATH"]
+            self.token = st.secrets["DATABRICKS_TOKEN"]
+            self.database = st.secrets.get("DATABASE_NAME", "insurance_db")
+            self.table = st.secrets.get("TABLE_NAME", "insurance_data")
+            logger.info(f"✅ Database config loaded: {self.database}.{self.table}")
+        except Exception as e:
+            logger.error(f"❌ Failed to load secrets: {e}")
+            st.error("Database configuration error. Check secrets.toml")
+    
     def get_connection(self):
         """Create Databricks SQL connection"""
         try:
@@ -23,20 +28,58 @@ class DatabricksDatabase:
                 http_path=self.http_path,
                 access_token=self.token
             )
+            logger.info("✅ Databricks connection successful")
             return conn
         except Exception as e:
-            logger.error(f"Databricks connection failed: {e}")
+            logger.error(f"❌ Databricks connection failed: {e}")
+            st.error(f"Failed to connect to Databricks: {str(e)}")
             return None
     
-    def authenticate_user(self, identifier: str, password: str = None) -> Optional[Dict[str, Any]]:
-        """Authenticate user using REAL Databricks data"""
+    def test_connection(self):
+        """Test if we can connect and query"""
         try:
             conn = self.get_connection()
             if not conn:
-                return None
+                return False, "No connection"
             
             with conn.cursor() as cursor:
-                # Query to find user by EmployeeID, Email, or PolicyNumber
+                # Try simple query
+                cursor.execute(f"SHOW TABLES IN {self.database}")
+                tables = cursor.fetchall()
+                logger.info(f"✅ Found tables: {tables}")
+                
+                # Check our table exists
+                cursor.execute(f"DESCRIBE {self.database}.{self.table}")
+                columns = cursor.fetchall()
+                logger.info(f"✅ Table columns: {len(columns)} columns")
+                
+                # Get sample data
+                cursor.execute(f"SELECT COUNT(*) FROM {self.database}.{self.table}")
+                count = cursor.fetchone()[0]
+                logger.info(f"✅ Total records: {count}")
+                
+            conn.close()
+            return True, f"✅ Connected! {count} records in {self.table}"
+            
+        except Exception as e:
+            logger.error(f"❌ Test failed: {e}")
+            return False, f"Connection test failed: {str(e)}"
+    
+    def authenticate_user(self, identifier: str) -> Optional[Dict[str, Any]]:
+        """Authenticate user using REAL Databricks data - DEBUG VERSION"""
+        try:
+            logger.info(f"🔍 Authenticating user with identifier: {identifier}")
+            
+            conn = self.get_connection()
+            if not conn:
+                st.error("❌ Cannot connect to database")
+                return None
+            
+            # First, let's see what identifiers exist
+            with conn.cursor() as cursor:
+                # DEBUG: Show what we're looking for
+                logger.info(f"📊 Querying: SELECT * FROM {self.database}.{self.table} WHERE EmployeeID = '{identifier}' OR Email = '{identifier}' OR PolicyNumber = '{identifier}'")
+                
                 query = f"""
                 SELECT 
                     EmployeeID,
@@ -65,6 +108,8 @@ class DatabricksDatabase:
                 result = cursor.fetchone()
                 
                 if result:
+                    logger.info(f"✅ USER FOUND: {result[0]} - {result[1]} {result[2]}")
+                    
                     # Map result to user dictionary
                     user_data = {
                         "employee_id": result[0],
@@ -81,14 +126,35 @@ class DatabricksDatabase:
                         "risk_score": int(result[11]) if result[11] else 0,
                         "fraud_risk": result[12],
                         "company": result[13],
-                        "role": result[14],
+                        "role": result[14] if result[14] else "policyholder",
                         "auth_method": "databricks"
                     }
+                    
+                    # DEBUG: Show what we found
+                    st.info(f"✅ Found user: {user_data['first_name']} {user_data['last_name']}")
+                    logger.info(f"User data: {user_data}")
+                    
                     return user_data
-                return None
-                
+                else:
+                    logger.warning(f"❌ NO USER FOUND for identifier: {identifier}")
+                    
+                    # DEBUG: Show what's in the database
+                    cursor.execute(f"""
+                    SELECT EmployeeID, Email, PolicyNumber 
+                    FROM {self.database}.{self.table} 
+                    LIMIT 5
+                    """)
+                    samples = cursor.fetchall()
+                    logger.info(f"Sample identifiers in DB: {samples}")
+                    
+                    st.warning(f"No user found with: {identifier}")
+                    st.info(f"Try: EMP10001, dawn.knight@meta.com, or POL96733444")
+                    
+                    return None
+                    
         except Exception as e:
-            logger.error(f"Authentication error: {e}")
+            logger.error(f"❌ Authentication error: {e}")
+            st.error(f"Authentication error: {str(e)}")
             return None
         finally:
             if 'conn' in locals():
